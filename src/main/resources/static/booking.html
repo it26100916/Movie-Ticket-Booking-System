@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Choose seats · CineMax</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header id="topbar" class="topbar"></header>
+
+  <main class="container">
+    <div class="loader" id="loading">Loading seat map…</div>
+
+    <div id="content" class="hidden">
+      <a href="#" id="backLink" class="muted">← Back</a>
+      <div class="section-head">
+        <div>
+          <h1 id="movieTitle"></h1>
+          <p id="showMeta"></p>
+        </div>
+        <div id="headerStatus"></div>
+      </div>
+
+      <div class="split">
+        <!-- Member 5: seat map + selection -->
+        <section class="card">
+          <div class="screen-wrap">
+            <div class="screen-bar"></div>
+            <div class="screen-label">SCREEN</div>
+          </div>
+          <div class="seat-map" id="seatMap"></div>
+          <div class="legend">
+            <span><i class="l-free"></i>Available</span>
+            <span><i class="l-sel"></i>Your seats</span>
+            <span><i class="l-booked"></i>Taken</span>
+          </div>
+          <p class="hint mt-2" id="lockNote" style="text-align:center"></p>
+        </section>
+
+        <aside class="stack">
+          <section class="card">
+            <h2>Your selection</h2>
+            <div class="summary-row"><span class="k">Showtime</span><span id="sTime"></span></div>
+            <div class="summary-row"><span class="k">Screen</span><span id="sScreen"></span></div>
+            <div class="summary-row"><span class="k">Seats</span><span id="sSeats">None selected</span></div>
+            <div class="summary-row"><span class="k">Price per seat</span><span id="sPrice"></span></div>
+            <div class="summary-row"><span class="k">Pricing rule</span><span id="sRule"></span></div>
+            <div class="summary-row" style="align-items:center"><span class="k">Total</span><span class="total" id="sTotal">LKR 0.00</span></div>
+            <div class="mt-2" id="actionArea"></div>
+          </section>
+
+          <!-- Member 6: checkout -->
+          <section class="card hidden" id="paymentCard">
+            <h2>Payment</h2>
+            <div id="payForm">
+              <div class="field">
+                <label for="method">Payment method</label>
+                <select id="method">
+                  <option value="CARD">Credit / debit card</option>
+                  <option value="WALLET">Mobile wallet</option>
+                  <option value="CASH_COUNTER">Pay at cinema counter</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="reference" id="refLabel">Card number</label>
+                <input id="reference" autocomplete="off">
+                <span class="hint" id="refHint"></span>
+              </div>
+              <div class="summary-row"><span class="k">Convenience fee</span><span id="feeText">LKR 0.00</span></div>
+              <button class="btn btn-primary btn-block mt-2" id="payBtn">Pay now</button>
+              <div class="error-text" id="payError"></div>
+            </div>
+            <div id="receipt" class="hidden"></div>
+          </section>
+        </aside>
+      </div>
+    </div>
+  </main>
+
+  <script src="js/common.js"></script>
+  <script>
+    /* Member 5 (Booking & Seat Reservation) + Member 6 (Payment) UI.
+       Modes: ?showId=X -> new booking   |   ?bookingId=Y -> edit seats / pay for a pending booking */
+    const METHODS = {
+      CARD:         { label: 'Card number',  placeholder: '16-digit card number', fee: 0.02,
+                      hint: 'Demo: any 16 digits. A 2% convenience fee applies. Only the last 4 digits are stored.' },
+      WALLET:       { label: 'Wallet ID',    placeholder: 'Phone number or wallet ID', fee: 0,
+                      hint: '5–40 characters, for example 0771234567.' },
+      CASH_COUNTER: { label: 'Counter code', placeholder: 'CNT-01', fee: 0,
+                      hint: 'Show this code at the cinema counter. Format CNT-nn.' }
+    };
+
+    let me = null, show = null, booking = null, showId = null, bookingId = null;
+    let selected = new Set();
+    let booked = new Set();
+
+    const $ = id => document.getElementById(id);
+
+    async function init() {
+      me = await requireRole('CUSTOMER', 'customer-login.html');
+      if (!me) return;
+      renderNav('movies');
+      try {
+        bookingId = qs('bookingId') ? Number(qs('bookingId')) : null;
+        if (bookingId) {
+          booking = await API.get('/api/customer/bookings/' + bookingId);
+          showId = booking.showId;
+          selected = new Set(booking.seatCodes);
+        } else {
+          showId = Number(qs('showId'));
+          if (!showId) throw new Error('No showtime selected. Pick one from a movie page.');
+        }
+        await loadShow();
+        $('loading').classList.add('hidden');
+        $('content').classList.remove('hidden');
+        renderAll();
+      } catch (err) {
+        $('loading').textContent = err.message;
+      }
+    }
+
+    /** Loads the showtime and works out which seats other customers hold. */
+    async function loadShow() {
+      show = await API.get('/api/shows/' + showId);
+      const own = new Set(booking ? booking.seatCodes : []);
+      booked = new Set(show.bookedSeats.filter(code => !own.has(code)));
+      selected = new Set([...selected].filter(code => !booked.has(code)));
+    }
+
+    function isLocked() { return booking && booking.status !== 'PENDING_PAYMENT'; }
+    function isPast() { return new Date(show.startTime) <= new Date(); }
+    function isDirty() {
+      if (!booking) return selected.size > 0;
+      return [...selected].sort().join(',') !== [...booking.seatCodes].sort().join(',');
+    }
+    function sortSeats(a, b) { return a[0].localeCompare(b[0]) || Number(a.slice(1)) - Number(b.slice(1)); }
+
+    function renderAll() {
+      document.title = show.movieTitle + ' · CineMax';
+      $('movieTitle').textContent = show.movieTitle;
+      $('backLink').href = 'movie.html?id=' + show.movieId;
+      $('showMeta').innerHTML = `${esc(show.theatreName)} · ${esc(show.screenName)} · ${fmtDateTime(show.startTime)} ${formatBadge(show.movieFormat)}`;
+      $('headerStatus').innerHTML = booking ? statusBadge(booking.status) : '';
+      renderSeatMap();
+      renderSummary();
+      renderActions();
+      renderPayment();
+    }
+
+    function renderSeatMap() {
+      const locked = isLocked() || isPast();
+      const cols = show.seatsPerRow;
+      let html = '';
+      for (let r = 0; r < show.rowCount; r++) {
+        const letter = String.fromCharCode(65 + r);
+        html += `<div class="seat-row"><span class="row-label">${letter}</span>`;
+        for (let c = 1; c <= cols; c++) {
+          const code = letter + c;
+          const taken = booked.has(code);
+          const mine = selected.has(code);
+          const aisle = cols >= 8 && c === Math.floor(cols / 2) + 1 ? ' aisle' : '';
+          const cls = ['seat', mine ? 'selected' : '', taken ? 'booked' : '', aisle].join(' ').trim();
+          html += `<button type="button" class="${cls}" data-code="${code}" title="${code}"
+                    ${taken || locked ? 'disabled' : ''}>${taken ? '' : c}</button>`;
+        }
+        html += `<span class="row-label">${letter}</span></div>`;
+      }
+      $('seatMap').innerHTML = html;
+      $('lockNote').textContent = isPast() ? 'This showtime has already started.'
+        : isLocked() ? 'This booking is ' + booking.status.toLowerCase().replace('_', ' ') + ' and can no longer be changed.'
+        : 'Click seats to select them. Up to 10 seats per booking.';
+    }
+
+    function renderSummary() {
+      const seats = [...selected].sort(sortSeats);
+      $('sTime').textContent = fmtDateTime(show.startTime);
+      $('sScreen').textContent = `${show.screenName} (${show.screenType.toLowerCase()})`;
+      $('sSeats').textContent = seats.length ? seats.join(', ') : 'None selected';
+      $('sPrice').textContent = money(show.seatPrice);
+      $('sRule').textContent = show.pricingStrategy + (show.movieFormat !== 'STANDARD' ? ' + ' + (show.movieFormat === 'IMAX' ? 'IMAX' : '3D') + ' surcharge' : '');
+      const total = booking && !isDirty() ? Number(booking.totalAmount) : selected.size * Number(show.seatPrice);
+      $('sTotal').textContent = money(total);
+    }
+
+    function renderActions() {
+      const area = $('actionArea');
+      if (isPast()) { area.innerHTML = '<p class="error-text">Booking closed: the show has started.</p>'; return; }
+      if (isLocked()) {
+        area.innerHTML = '<a class="btn btn-ghost btn-block" href="my-bookings.html">Back to my bookings</a>';
+        return;
+      }
+      const count = selected.size;
+      if (!booking) {
+        area.innerHTML = `<button class="btn btn-primary btn-block" id="mainBtn" ${count === 0 ? 'disabled' : ''}>Reserve ${count || ''} seat${count === 1 ? '' : 's'}</button>
+                          <p class="hint mt-1">Seats are held for you while you complete payment.</p>`;
+        $('mainBtn').addEventListener('click', reserve);
+      } else {
+        area.innerHTML = `<button class="btn btn-primary btn-block" id="mainBtn" ${count === 0 || !isDirty() ? 'disabled' : ''}>Save seat changes</button>`;
+        $('mainBtn').addEventListener('click', saveSeats);
+      }
+    }
+
+    /* CREATE booking (Member 5) */
+    async function reserve() {
+      try {
+        booking = await API.post('/api/customer/bookings', { showId, seatCodes: [...selected] });
+        bookingId = booking.id;
+        history.replaceState(null, '', 'booking.html?bookingId=' + bookingId);
+        toast('Seats reserved. Complete payment to confirm your booking.');
+      } catch (err) {
+        toast(err.message, 'err');
+      }
+      await refreshAll();
+    }
+
+    /* UPDATE booking seats (Member 5) */
+    async function saveSeats() {
+      try {
+        booking = await API.put('/api/customer/bookings/' + bookingId, { seatCodes: [...selected] });
+        toast('Seats updated');
+      } catch (err) {
+        toast(err.message, 'err');
+      }
+      await refreshAll();
+    }
+
+    async function refreshAll() {
+      try {
+        if (bookingId) booking = await API.get('/api/customer/bookings/' + bookingId);
+        await loadShow();
+        renderAll();
+      } catch (err) {
+        toast(err.message, 'err');
+      }
+    }
+
+    /* Seat map interaction */
+    $('seatMap').addEventListener('click', (e) => {
+      const btn = e.target.closest('.seat');
+      if (!btn || btn.disabled || isLocked() || isPast()) return;
+      const code = btn.dataset.code;
+      if (selected.has(code)) {
+        selected.delete(code);
+      } else {
+        if (selected.size >= 10) { toast('You can select up to 10 seats per booking', 'err'); return; }
+        selected.add(code);
+      }
+      renderSeatMap();
+      renderSummary();
+      renderActions();
+    });
+
+    /* ---------- Member 6: payment ---------- */
+    function renderPayment() {
+      const card = $('paymentCard');
+      if (!booking) { card.classList.add('hidden'); return; }
+      card.classList.remove('hidden');
+      if (booking.status === 'PENDING_PAYMENT') {
+        $('payForm').classList.remove('hidden');
+        $('receipt').classList.add('hidden');
+        updateMethodUI();
+        return;
+      }
+      $('payForm').classList.add('hidden');
+      showReceipt();
+    }
+
+    function updateMethodUI() {
+      const m = $('method').value;
+      const cfg = METHODS[m];
+      $('refLabel').textContent = cfg.label;
+      $('reference').placeholder = cfg.placeholder;
+      $('refHint').textContent = cfg.hint;
+      const fee = Math.round(Number(booking.totalAmount) * cfg.fee * 100) / 100;
+      $('feeText').textContent = money(fee);
+      $('payBtn').textContent = 'Pay ' + money(Number(booking.totalAmount) + fee);
+      $('payBtn').disabled = isDirty() || isPast();
+      $('payError').textContent = isDirty() ? 'Save your seat changes before paying.' : '';
+    }
+
+    async function showReceipt() {
+      const box = $('receipt');
+      box.classList.remove('hidden');
+      try {
+        const payments = await API.get('/api/customer/payments');
+        const p = payments.find(x => x.bookingId === booking.id);
+        box.innerHTML = `
+          <div class="stack">
+            <span class="badge badge-ok" style="justify-self:start">✔ Booking confirmed</span>
+            <div class="summary-row"><span class="k">Booking reference</span><strong>${esc(booking.reference)}</strong></div>
+            ${p ? `
+            <div class="summary-row"><span class="k">Transaction</span><span>${esc(p.transactionRef)}</span></div>
+            <div class="summary-row"><span class="k">Paid with</span><span>${esc(p.description)}</span></div>
+            <div class="summary-row"><span class="k">Amount charged</span><span>${money(p.amount)}</span></div>
+            <div class="summary-row"><span class="k">Status</span><span>${statusBadge(p.status)}</span></div>` : ''}
+            <a class="btn btn-primary btn-block" href="my-bookings.html">View my bookings</a>
+          </div>`;
+      } catch (err) {
+        box.innerHTML = `<p>Booking ${esc(booking.reference)} is confirmed.</p>`;
+      }
+    }
+
+    $('method').addEventListener('change', updateMethodUI);
+
+    $('payBtn').addEventListener('click', async () => {
+      $('payError').textContent = '';
+      $('payBtn').disabled = true;
+      try {
+        await API.post('/api/customer/payments', {
+          bookingId: booking.id,
+          method: $('method').value,
+          reference: $('reference').value.trim()
+        });
+        toast('Payment successful. Your seats are confirmed!');
+        await refreshAll();
+      } catch (err) {
+        $('payError').textContent = err.message;
+        $('payBtn').disabled = false;
+      }
+    });
+
+    init();
+  </script>
+</body>
+</html>
