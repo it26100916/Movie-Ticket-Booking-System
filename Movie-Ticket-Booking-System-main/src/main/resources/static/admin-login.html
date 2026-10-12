@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin Login · CineMax</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <main class="auth-wrap">
+    <div class="card auth-card">
+      <span class="badge badge-imax tag">Admin portal</span>
+      <h1>Staff sign-in</h1>
+      <p>Manage movies, theatres, showtimes, bookings, payments and reports.</p>
+
+      <form id="loginForm" novalidate>
+        <div class="field">
+          <label for="email">Admin email</label>
+          <input id="email" type="email" required autocomplete="username">
+        </div>
+        <div class="field">
+          <label for="password">Password</label>
+          <input id="password" type="password" required autocomplete="current-password">
+        </div>
+        <div class="error-text" id="error"></div>
+        <button class="btn btn-primary btn-block" id="submitBtn" type="submit">Sign in to dashboard</button>
+      </form>
+
+      <p class="mt-2" style="text-align:center;font-size:.9rem"><a href="customer-login.html">← Customer login</a></p>
+      <p class="hint mt-2">Demo: admin@cinema.lk / admin123 (super admin) · staff@cinema.lk / staff123</p>
+    </div>
+  </main>
+
+  <script src="js/common.js"></script>
+  <script>
+    /* Member 1 (User & Authentication) UI: separate admin login */
+    document.getElementById('loginForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const error = document.getElementById('error');
+      const button = document.getElementById('submitBtn');
+      error.textContent = '';
+      button.disabled = true;
+      try {
+        await API.post('/api/auth/admin/login', {
+          email: document.getElementById('email').value.trim(),
+          password: document.getElementById('password').value
+        });
+        window.location.href = 'admin-dashboard.html';
+      } catch (err) {
+        error.textContent = err.message;
+      } finally {
+        button.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
