@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>My Profile · CineMax</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header id="topbar" class="topbar"></header>
+
+  <main class="container">
+    <div class="section-head">
+      <div>
+        <h1>My <span class="gradient-text">profile</span></h1>
+        <p>Update your details or close your account.</p>
+      </div>
+    </div>
+
+    <div class="split">
+      <section class="card">
+        <h2>Personal details</h2>
+        <form id="profileForm" novalidate>
+          <div class="form-row">
+            <div class="field">
+              <label for="fullName">Full name</label>
+              <input id="fullName" required maxlength="100">
+            </div>
+            <div class="field">
+              <label for="phone">Phone</label>
+              <input id="phone" maxlength="20">
+            </div>
+          </div>
+          <div class="field">
+            <label for="email">Email (cannot be changed)</label>
+            <input id="email" disabled>
+          </div>
+          <div class="field">
+            <label for="newPassword">New password (optional)</label>
+            <input id="newPassword" type="password" minlength="6" maxlength="60" autocomplete="new-password">
+            <span class="hint">Leave empty to keep your current password.</span>
+          </div>
+          <div class="error-text" id="error"></div>
+          <button class="btn btn-primary" type="submit">Save changes</button>
+        </form>
+      </section>
+
+      <aside class="stack">
+        <div class="card">
+          <h3>Loyalty</h3>
+          <div class="stat">
+            <span class="num gradient-text" id="points">0</span>
+            <span class="lbl">points · earn 1 per seat on every paid booking</span>
+          </div>
+          <p class="mt-2" style="margin-bottom:0"><span class="muted">Member since </span><span id="since"></span></p>
+        </div>
+        <div class="card" style="border-color: rgba(239,68,68,.35)">
+          <h3>Delete account</h3>
+          <p>Accounts with booking history cannot be deleted, to keep payment records intact.</p>
+          <button class="btn btn-danger" id="deleteBtn">Delete my account</button>
+        </div>
+      </aside>
+    </div>
+  </main>
+
+  <script src="js/common.js"></script>
+  <script>
+    /* Member 1 (User & Authentication) UI: customer READ / UPDATE / DELETE own profile */
+    let me = null;
+
+    async function load() {
+      me = await requireRole('CUSTOMER', 'customer-login.html');
+      if (!me) return;
+      renderNav('profile');
+      const p = await API.get('/api/customer/profile');
+      document.getElementById('fullName').value = p.fullName;
+      document.getElementById('phone').value = p.phone || '';
+      document.getElementById('email').value = p.email;
+      document.getElementById('points').textContent = p.loyaltyPoints ?? 0;
+      document.getElementById('since').textContent = fmtDate(p.createdAt);
+    }
+
+    document.getElementById('profileForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const error = document.getElementById('error');
+      error.textContent = '';
+      try {
+        await API.put('/api/customer/profile', {
+          fullName: document.getElementById('fullName').value.trim(),
+          phone: document.getElementById('phone').value.trim() || null,
+          newPassword: document.getElementById('newPassword').value || null
+        });
+        document.getElementById('newPassword').value = '';
+        toast('Profile updated');
+        load();
+      } catch (err) {
+        error.textContent = err.message;
+      }
+    });
+
+    document.getElementById('deleteBtn').addEventListener('click', async () => {
+      if (!confirm('Delete your account? This cannot be undone.')) return;
+      try {
+        await API.del('/api/customer/profile');
+        window.location.href = 'index.html';
+      } catch (err) {
+        toast(err.message, 'err');
+      }
+    });
+
+    load().catch(err => toast(err.message, 'err'));
+  </script>
+</body>
+</html>
